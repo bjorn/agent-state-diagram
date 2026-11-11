@@ -7,10 +7,11 @@ flowchart LR
   coord --> task
 
   subgraph todo_main ["Assistant TODO"]
-    t_scope["Confirm scope — done"]:::done
-    t_build["Implement keyboard support — running"]:::running
-    t_review["Review behavior — pending"]:::pending
-    t_report["Summarize changes — pending"]:::pending
+    t_scope["Confirm scope (done)"]:::done
+    t_build["Implement keyboard support (running)"]:::running
+    t_review["Review behavior (pending)"]:::pending
+    t_report["Summarize changes (pending)"]:::pending
+    t_scope ~~~ t_build ~~~ t_review ~~~ t_report
   end
   coord --- todo_main
 
@@ -22,8 +23,9 @@ flowchart LR
   review -. waits on .-> implement
 
   subgraph todo_implement ["Implementation TODO"]
-    i_events["Handle key events — running"]:::running
-    i_tests["Check focus movement — pending"]:::pending
+    i_events["Handle key events (running)"]:::running
+    i_tests["Check focus movement (pending)"]:::pending
+    i_events ~~~ i_tests
   end
   implement --- todo_implement
   implement ==> i_events
