@@ -17,7 +17,7 @@
     body { margin: 0; }
     header { position: sticky; top: 0; z-index: 1; display: flex; gap: .6rem 1rem; align-items: center; flex-wrap: wrap; padding: .55rem 1rem; background: var(--surface); border-bottom: 1px solid var(--border); }
     #status { color: var(--muted); }
-    .controls { display: grid; grid-template-columns: repeat(2, 1fr); gap: .5rem; margin-left: auto; }
+    .controls { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; margin-left: auto; }
     .toggle { position: relative; display: inline-flex; align-items: center; gap: .45rem; box-sizing: border-box; min-height: 2.4rem; padding: .35rem .6rem; border: 1px solid var(--border); border-radius: .5rem; cursor: pointer; white-space: nowrap; }
     .toggle:hover { background: var(--page); }
     .toggle:has(input:checked) { border-color: var(--focus); }
@@ -32,6 +32,11 @@
     main[data-diagram-panning] #diagram,
     main[data-diagram-panning] #diagram * { cursor: grabbing !important; user-select: none !important; }
     pre { white-space: pre-wrap; }
+    #source { margin: 0; padding: .75rem 1rem; background: var(--surface); border: 1px solid var(--border); border-radius: .5rem; font: 13px/1.45 ui-monospace, monospace; }
+    /* Show the diagram once rendered, or the source when View source is on. */
+    #diagram ~ #source { display: none; }
+    body:has(#view-source:checked) #diagram { display: none; }
+    body:has(#view-source:checked) #source { display: block; }
     #diagram { display: flow-root; }
     #diagram > svg { display: block; width: var(--diagram-width); max-width: none; height: auto; background: var(--surface); }
     #diagram > svg[data-theme="light"] { --surface: #fff; }
@@ -57,6 +62,7 @@
     <div class="controls" role="group" aria-label="Diagram display">
       <label class="toggle"><input id="fit" type="checkbox" role="switch" checked><span>Fit width</span><span class="toggle-track" aria-hidden="true"></span></label>
       <label class="toggle"><input id="theme" type="checkbox" role="switch"><span>Dark mode</span><span class="toggle-track" aria-hidden="true"></span></label>
+      <label class="toggle"><input id="view-source" type="checkbox" role="switch"><span>View source</span><span class="toggle-track" aria-hidden="true"></span></label>
     </div>
   </header>
   <main id="markdown"><pre id="source">{{source}}</pre></main>

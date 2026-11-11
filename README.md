@@ -79,7 +79,7 @@ For the live viewer, ask your assistant:
 The [setup guide](skills/state-diagram/viewer/README.md) has the actual commands,
 offline asset options and host requirements. Everything required is inside
 `skills/state-diagram/`, so copying/installing only that directory is sufficient.
-The viewer adds local Fit width, dark mode, zoom/pan and successful-render time;
+The viewer adds local Fit width, dark mode, View source, zoom/pan and successful-render time;
 it is not required by the core skill.
 
 ## Compatibility and license
