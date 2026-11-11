@@ -7,9 +7,10 @@ flowchart LR
   coord --> task
 
   subgraph todo_main ["Assistant TODO"]
-    t_scope["Agree scope — done"]:::done
-    t_copy["Revise labels — running"]:::running
-    t_check["Check consistency — pending"]:::pending
+    t_scope["Agree scope (done)"]:::done
+    t_copy["Revise labels (running)"]:::running
+    t_check["Check consistency (pending)"]:::pending
+    t_scope ~~~ t_copy ~~~ t_check
   end
   coord --- todo_main
 

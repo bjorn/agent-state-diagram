@@ -1,7 +1,7 @@
 # Local integration
 
-The project supplies integration policy. This skill does not select a workspace
-root, source path, version-control rule or runtime for it.
+The project supplies integration policy: its workspace root, source path,
+version-control rule and runtime.
 
 Resolve these choices from local instructions or configuration:
 
@@ -21,14 +21,14 @@ A project may add a pointer such as:
 > state-diagram skill. Use the canonical source and permissions selected in
 > this project's local configuration.
 
-That pointer is a proposal, not an instruction to edit an existing policy file
-without permission. The host decides how it discovers skills and local policy;
-there is no assumed configuration filename or automatic configuration loader.
+Propose that pointer, and edit an existing policy file only with permission.
+The host decides how it discovers skills and local policy, so choose the
+configuration file to fit the host.
 
 Keep provider-specific task APIs, participant identifiers, worker launch
 commands and runtime paths in a local adapter. Map observed statuses faithfully
-to the documented notation. An unavailable or cancelled activity is not a
-success; record the condition before removing it from active work.
+to the documented notation. Record an unavailable or cancelled activity as
+such before removing it from active work.
 
 ## Optional renderer contract
 
@@ -44,5 +44,5 @@ failure. Otherwise state the narrower check actually performed.
 
 Keep canonical input separate from generated output and diagnostics. A viewer
 should serve only its intended public assets, use an appropriate trust boundary
-for diagram text, and retain ownership of any process it launches. An exported
-image is a snapshot, not evidence of continuing live freshness.
+for diagram text, and retain ownership of any process it launches. Treat an
+exported image as a snapshot of one moment.

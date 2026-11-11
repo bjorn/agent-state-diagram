@@ -58,11 +58,11 @@ read its `SKILL.md`. Automatic invocation is then not guaranteed.
 Read [the skill](skills/state-diagram/SKILL.md). The
 [multi-assistant example](skills/state-diagram/examples/state.md) and
 [single-assistant example](skills/state-diagram/examples/single-assistant.md)
-are fictional, not live state or records of completed work.
+are fictional.
 
-The map summarizes work; it does not authorize delegation, commits,
-publication or service startup. Local instructions retain those decisions.
-Keep real work state and evidence outside this distributable package.
+The map summarizes work; local instructions decide delegation, commits,
+publication and service startup. Keep real work state and evidence in the
+project, outside this distributable package.
 
 ## Optional rendering
 

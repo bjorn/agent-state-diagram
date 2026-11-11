@@ -17,29 +17,29 @@ A single assistant uses the same map without helper boxes.
    creating or overwriting a file. See
    [local integration](references/local-integration.md) when setting up a project.
 2. **Reconcile current work.** Use current session observations, available task
-   lists and relevant handoffs. After a restart, treat the old diagram as stale,
-   not proof that its participants are still running. Mark unavailable
-   observations as unverified notes; do not turn them into invented activity.
+   lists and relevant handoffs. After a restart, treat the old diagram as stale
+   until each participant is observed again. Record unavailable observations
+   as labelled unverified notes.
 3. **Draw the map.** Apply the [format](references/format.md). Preserve stable
    node IDs for continuing work. Include all current items, even items that are
    waiting, blocked or not assigned to a helper.
 4. **Check consistency.** Account for every active task, list and confirmed
    active helper once. Check each status, owner, work edge and dependency
-   against the observed state. A missing observation is a pending reconciliation,
-   not a successful check.
+   against the observed state. Report a missing observation as a pending
+   reconciliation.
 5. **Save and verify.** Serialize writes at the selected canonical path, using
    in-place editing or atomic replacement as local tooling permits. Re-read the
    saved source. If an approved renderer is available, check it within a bounded
-   wait; otherwise report “source checked; rendering unverified.” A saved file
-   alone does not prove that a browser is current.
+   wait; otherwise report “source checked; rendering unverified.” Claim a
+   current browser view only after checking it.
 
 For optional live-viewer setup, follow the [setup guide](viewer/README.md).
 Renderer setup is a separate approval decision; the update steps also work
 without it.
 
 An update is complete when the source matches the observed work and any gaps
-or pending view checks are explicit. If editing is not authorized, return a
-proposed map instead of claiming the canonical source was updated.
+or pending view checks are explicit. Without edit authorization, return a
+proposed map and leave the canonical source unchanged.
 
 ## Lifecycle
 
@@ -52,11 +52,11 @@ proposed map instead of claiming the canonical source was updated.
   A `done` helper box is only a brief transition until its result is recorded.
 - Keep enough generic role information to identify work. Keep sensitive paths,
   session handles and detailed results in private local records.
-- Follow local Git and runtime policy. Updating the map does not independently
-  authorize a commit, installation, network request or service launch.
+- Follow local Git and runtime policy. Commits, installations, network requests
+  and service launches each need their own local authorization.
 
 ## Examples
 
 Use [the single-assistant example](examples/single-assistant.md) when working
 alone, or [the helper example](examples/state.md) when helpers are actually
-present. Adapt their fictional labels; do not present example activity as real.
+present. Replace their fictional labels with observed work.
