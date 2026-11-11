@@ -35,8 +35,13 @@ survival, duplicate rejection, private 404s and real in-place/atomic/subsequent
 rebuilds. With `PUPPETEER_MODULE`, it also runs `live.mjs` for local assets,
 source/served/body/SVG hashes, LiveReload, switches, themes, gestures and mobile.
 The owned process is stopped and the temporary project removed even on failure.
-It also restarts from the legitimate stale lifecycle record. Focused unit cases
-reject foreign lifecycle data before setup/spawn while preserving its exact bytes.
+It also forces server-side TCP TIME_WAIT with real HTTP traffic, stops and
+immediately restarts the actual CLI on the **same port** three times from the
+legitimate stale lifecycle record, checking HTTP, LiveReload upgrade and source readiness before
+that connection's TIME_WAIT expires. Actual CLI and pre-spawn unit checks refuse
+foreign loopback/wildcard listeners with and without address/port reuse, leaving
+them functional. Focused unit cases reject foreign lifecycle data before
+setup/spawn while preserving its exact bytes.
 
 Serverless suites cover pending/stale/failed renders, last-success local time,
 Fit width/manual choices, OS/stored/blocked-storage themes, dark shadow pixels,

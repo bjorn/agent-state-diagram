@@ -98,8 +98,12 @@ class CopiedSkillTests(unittest.TestCase):
 
     @classmethod
     def stop_site(cls):
-        result = json.loads(cls.run_cli("serve.py", "--stop").stdout)
-        assert result["stopped"]
+        current = json.loads(cls.run_cli("serve.py", "--status", check=False).stdout)
+        if current["alive"]:
+            result = json.loads(cls.run_cli("serve.py", "--stop").stdout)
+            assert result["stopped"]
+        else:
+            result = {"already_not_alive": True}  # Restart regressions may leave it stopped.
         assert cls.run_cli("serve.py", "--status", check=False).returncode == 1
         cls.proof["owned_cleanup"] = result
         assert cls.inventory() == cls.inventory_before
@@ -122,6 +126,14 @@ class CopiedSkillTests(unittest.TestCase):
             return result.status, result.read()
         finally:
             conn.close()
+
+    @classmethod
+    def tcp_rows(cls):
+        # Passive evidence on this owned port, not a bare-bind restart oracle.
+        return [{"family": family, "local": values[1], "remote": values[2], "state": values[3]}
+                for family in ("tcp", "tcp6")
+                for line in Path("/proc/net", family).read_text().splitlines()[1:]
+                if (values := line.split()) and int(values[1].rsplit(":", 1)[1], 16) == cls.port]
 
     def test_01_source_startup_and_detached_session_cleanup(self):
         current = json.loads(self.run_cli("serve.py", "--status").stdout)
@@ -198,20 +210,92 @@ class CopiedSkillTests(unittest.TestCase):
         self.proof["browser"] = True
 
     def test_05_legitimate_stale_record_supports_real_restart(self):
-        old_pid = json.loads(self.run_cli("serve.py", "--status").stdout)["pid"]
+        self.proof["stale_owned_same_port_restarts"] = []
+        for attempt in range(3):
+            old = json.loads(self.run_cli("serve.py", "--status").stdout)
+            # Server closes first: receive EOF before closing the client so its
+            # server-side TIME_WAIT survives --stop. Ordinary HTTP, no mock bind.
+            with socket.create_connection(("127.0.0.1", self.port), timeout=2) as client:
+                remote = f"0100007F:{client.getsockname()[1]:04X}"
+                client.sendall(b"GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
+                response = bytearray()
+                while chunk := client.recv(65536):
+                    response.extend(chunk)
+            self.assertTrue(response.startswith(b"HTTP/1.1 200"))
+            self.assertIn(hashlib.sha256(self.source.read_bytes()).hexdigest().encode(), response)
+            self.assertTrue(json.loads(self.run_cli("serve.py", "--stop").stdout)["stopped"])
+            stopped_at = time.monotonic()
+            self.assertFalse(json.loads(self.run_cli("serve.py", "--status", check=False).stdout)["alive"])
+            rows = self.tcp_rows()
+            self.assertFalse(any(row["state"] == "0A" for row in rows), rows)
+            time_wait = next((row for row in rows if row["state"] == "06" and row["remote"] == remote), None)
+            self.assertIsNotNone(time_wait, rows)
+            record = (self.site / "cache/lifecycle.json").read_bytes()
+            self.run_cli("setup.py")
+            self.assertEqual((self.site / "cache/lifecycle.json").read_bytes(), record)
+            restart = self.run_cli("serve.py", "--port", str(self.port), check=False)
+            self.assertEqual(restart.returncode, 0, restart.stderr)
+            started = json.loads(restart.stdout)
+            elapsed = time.monotonic() - stopped_at
+            self.assertEqual(started["url"], old["url"])
+            self.assertNotEqual(started["pid"], old["pid"])
+            self.assertTrue(started["source_current"])
+            self.assertEqual(self.request()[0], 200)
+            # HTTP and LiveReload use the same Zola listener, including after restart.
+            ws = http.client.HTTPConnection("127.0.0.1", self.port, timeout=2)
+            key = base64.b64encode(b"0123456789abcdef")
+            try:
+                ws.request("GET", "/livereload", headers={
+                    "Connection": "Upgrade", "Upgrade": "websocket",
+                    "Sec-WebSocket-Version": "13", "Sec-WebSocket-Key": key.decode()})
+                upgraded = ws.getresponse()
+                self.assertEqual(upgraded.status, 101)
+                expected = base64.b64encode(hashlib.sha1(
+                    key + b"258EAFA5-E914-47DA-95CA-C5AB0DC85B11").digest()).decode()
+                self.assertEqual(upgraded.getheader("Sec-WebSocket-Accept"), expected)
+                upgraded.close()
+            finally:
+                ws.close()
+            self.assertIn(time_wait, self.tcp_rows())  # Did not wait for TIME_WAIT expiry.
+            self.proof["stale_owned_same_port_restarts"].append({
+                "attempt": attempt, "old_pid": old["pid"], "new_pid": started["pid"],
+                "port": self.port, "seconds_since_stop": elapsed,
+                "url": started["url"], "source_sha256": started["source_sha256"],
+                "served_sha256": started["served_sha256"], "post_stop_tcp": rows,
+                "trigger_TIME_WAIT": time_wait, "trigger_TIME_WAIT_still_present": True,
+                "server_EOF_observed_before_client_close": True,
+                "same_port_livereload_upgrade": True, "passed": True})
+
+    def test_06_foreign_live_ports_refused_by_actual_cli(self):
         self.assertTrue(json.loads(self.run_cli("serve.py", "--stop").stdout)["stopped"])
         record = (self.site / "cache/lifecycle.json").read_bytes()
-        self.run_cli("setup.py")
-        self.assertEqual((self.site / "cache/lifecycle.json").read_bytes(), record)
-        with socket.socket() as probe:
-            probe.bind(("127.0.0.1", 0))
-            port = probe.getsockname()[1]
-        started = json.loads(self.run_cli("serve.py", "--port", str(port)).stdout)
-        self.assertTrue(started["source_current"])
-        self.assertNotEqual(started["pid"], old_pid)
-        type(self).port = port
-        self.proof["stale_owned_restart"] = {"old_pid": old_pid, "new_pid": started["pid"],
-                                           "port": port, "passed": True}
+        log = (self.site / "cache/zola.log").read_bytes()
+        self.proof["foreign_live_port_refusals"] = []
+        try:
+            for address in ("127.0.0.1", "0.0.0.0"):
+                for reuse_addr, reuse_port in ((0, 0), (1, 0), (1, 1)):
+                    with self.subTest(address=address, reuse_addr=reuse_addr, reuse_port=reuse_port):
+                        with socket.socket() as foreign:
+                            foreign.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, reuse_addr)
+                            foreign.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, reuse_port)
+                            foreign.bind((address, 0))
+                            foreign.listen(1)
+                            port = foreign.getsockname()[1]
+                            refused = self.run_cli("serve.py", "--port", str(port), check=False)
+                            self.assertNotEqual(refused.returncode, 0)
+                            self.assertIn("Address already in use", refused.stderr)
+                            self.assertEqual((self.site / "cache/lifecycle.json").read_bytes(), record)
+                            self.assertEqual((self.site / "cache/zola.log").read_bytes(), log)
+                            with socket.create_connection(("127.0.0.1", port), timeout=2) as client:
+                                with foreign.accept()[0] as accepted:
+                                    accepted.sendall(b"foreign service intact")
+                                    self.assertEqual(client.recv(64), b"foreign service intact")
+                            self.proof["foreign_live_port_refusals"].append({
+                                "address": address, "port": port, "reuse_addr": reuse_addr,
+                                "reuse_port": reuse_port, "functional_after_refusal": True})
+        finally:
+            # Restore the owned viewer for the normal lifecycle cleanup.
+            self.run_cli("serve.py", "--port", str(self.port))
 
 
 if __name__ == "__main__":

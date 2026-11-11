@@ -102,7 +102,10 @@ def start(site, port=1117):
         c.lifecycle_record(site)
         # An occupied port is never permission to replace another service.
         with socket.socket() as probe:
+            # Match Zola's TIME_WAIT reuse, not SO_REUSEPORT listener sharing.
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             probe.bind(("127.0.0.1", port))
+            probe.listen(1)
         with (runtime / "zola.log").open("ab") as output:
             process = subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=output,
                                        stderr=subprocess.STDOUT, start_new_session=True,

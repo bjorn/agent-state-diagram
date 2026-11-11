@@ -5,6 +5,7 @@ import sys
 import tempfile
 import os
 import shutil
+import socket
 import subprocess
 import unittest
 from unittest.mock import patch
@@ -252,6 +253,26 @@ class SetupTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "spawn reached"):
                 serve.start(self.site)
         self.assertEqual(path.read_bytes(), data)
+
+    def test_foreign_live_listener_refused_before_spawn_even_with_reuse_options(self):
+        self.prepare(init_example=True)
+        path = self.site / "cache/lifecycle.json"
+        data = json.dumps(self.stale_record()).encode() + b"\n"
+        path.write_bytes(data)
+        for address in ("127.0.0.1", "0.0.0.0"):
+            for reuse_addr, reuse_port in ((0, 0), (1, 0), (1, 1)):
+                with self.subTest(address=address, reuse_addr=reuse_addr, reuse_port=reuse_port):
+                    with socket.socket() as foreign:
+                        foreign.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, reuse_addr)
+                        foreign.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, reuse_port)
+                        foreign.bind((address, 0))
+                        foreign.listen(1)
+                        with patch.object(serve.subprocess, "Popen") as spawn:
+                            with self.assertRaises(OSError):
+                                serve.start(self.site, foreign.getsockname()[1])
+                            spawn.assert_not_called()
+                        self.assertEqual(foreign.getsockopt(socket.SOL_SOCKET, socket.SO_ACCEPTCONN), 1)
+                        self.assertEqual(path.read_bytes(), data)
 
     def test_record_rechecked_under_lock_before_spawning(self):
         self.prepare(init_example=True)
