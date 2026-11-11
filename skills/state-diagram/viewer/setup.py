@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Prepare a dedicated viewer project; offline unless --allow-downloads is explicit."""
 
+import sys
+sys.dont_write_bytecode = True  # Before local imports, including ordinary documented calls.
+
 import argparse
 import io
 import json
@@ -53,6 +56,7 @@ def setup(site, *, zola=None, mermaid=None, mermaid_license=None,
     if platform.system() != "Linux" or platform.machine().lower() not in ("x86_64", "amd64"):
         raise ValueError("This viewer currently supports Linux x86_64 (/proc and fcntl required)")
     site = c.layout(c.project(site))
+    c.lifecycle_record(site)
     source = site / "state/state.md"
     example = None
     if init_example:

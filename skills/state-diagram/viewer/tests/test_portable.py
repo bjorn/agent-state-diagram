@@ -34,6 +34,11 @@ class CopiedSkillTests(unittest.TestCase):
         cls.skill = cls.root / "installed skills/state-diagram"
         shutil.copytree(Path(__file__).resolve().parents[2], cls.skill,
                         ignore=shutil.ignore_patterns("__pycache__"))
+        cls.cli_env = os.environ.copy()
+        for key in ("PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX"):
+            cls.cli_env.pop(key, None)
+        cls.inventory_before = cls.inventory()
+        assert (cls.skill / "viewer/common.py").stat().st_mode & 0o200
         cls.viewer = cls.skill / "viewer"
         cls.site = cls.workspace / "live map"
         cls.source = cls.site / "state/state.md"
@@ -54,10 +59,10 @@ class CopiedSkillTests(unittest.TestCase):
             "print(p.stdout.strip(),flush=True);time.sleep(60)"
         )
         cls.owner = subprocess.Popen(
-            [sys.executable, "-B", "-c", wrapper, sys.executable, "-B",
+            [sys.executable, "-c", wrapper, sys.executable,
              str(cls.viewer / "serve.py"), "--site", str(cls.site), "--port", str(cls.port)],
             cwd=cls.workspace, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, start_new_session=True)
+            text=True, start_new_session=True, env=cls.cli_env)
         cls.addClassCleanup(cls.cleanup_owner)
         import select
         if not select.select([cls.owner.stdout], [], [], 15)[0]:
@@ -76,9 +81,14 @@ class CopiedSkillTests(unittest.TestCase):
 
     @classmethod
     def run_cli(cls, script, *args, check=True):
-        return subprocess.run([sys.executable, "-B", str(cls.viewer / script),
+        return subprocess.run([sys.executable, str(cls.viewer / script),
                                "--site", str(cls.site), *args], cwd=cls.workspace,
-                              capture_output=True, text=True, timeout=20, check=check)
+                              env=cls.cli_env, capture_output=True, text=True, timeout=20, check=check)
+
+    @classmethod
+    def inventory(cls):
+        return {str(p.relative_to(cls.skill)): hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in cls.skill.rglob("*") if p.is_file()}
 
     @classmethod
     def cleanup_owner(cls):
@@ -92,6 +102,9 @@ class CopiedSkillTests(unittest.TestCase):
         assert result["stopped"]
         assert cls.run_cli("serve.py", "--status", check=False).returncode == 1
         cls.proof["owned_cleanup"] = result
+        assert cls.inventory() == cls.inventory_before
+        assert not list(cls.skill.rglob("__pycache__"))
+        cls.proof["ordinary_documented_cli_writable_skill_unchanged"] = True
         cls.save_proof()
 
     @classmethod
@@ -120,6 +133,8 @@ class CopiedSkillTests(unittest.TestCase):
         self.assertEqual(self.source.stat().st_ino, self.initial_stat.st_ino)
         self.assertEqual(self.source.stat().st_mtime_ns, self.initial_stat.st_mtime_ns)
         self.assertEqual(self.instructions.read_text(), "Synthetic local instructions: preserve this file.\n")
+        self.assertEqual(self.inventory(), self.inventory_before)
+        self.assertEqual(list(self.skill.rglob("__pycache__")), [])
         self.assertNotEqual(self.run_cli("serve.py", check=False).returncode, 0)
         self.assertEqual(json.loads(self.run_cli("serve.py", "--status").stdout)["pid"], current["pid"])
         self.proof["survived_owner_cleanup"] = True
@@ -181,6 +196,22 @@ class CopiedSkillTests(unittest.TestCase):
                         f"http://127.0.0.1:{self.port}", str(self.source)],
                        cwd=self.workspace, check=True, timeout=40)
         self.proof["browser"] = True
+
+    def test_05_legitimate_stale_record_supports_real_restart(self):
+        old_pid = json.loads(self.run_cli("serve.py", "--status").stdout)["pid"]
+        self.assertTrue(json.loads(self.run_cli("serve.py", "--stop").stdout)["stopped"])
+        record = (self.site / "cache/lifecycle.json").read_bytes()
+        self.run_cli("setup.py")
+        self.assertEqual((self.site / "cache/lifecycle.json").read_bytes(), record)
+        with socket.socket() as probe:
+            probe.bind(("127.0.0.1", 0))
+            port = probe.getsockname()[1]
+        started = json.loads(self.run_cli("serve.py", "--port", str(port)).stdout)
+        self.assertTrue(started["source_current"])
+        self.assertNotEqual(started["pid"], old_pid)
+        type(self).port = port
+        self.proof["stale_owned_restart"] = {"old_pid": old_pid, "new_pid": started["pid"],
+                                           "port": port, "passed": True}
 
 
 if __name__ == "__main__":

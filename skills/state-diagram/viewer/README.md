@@ -63,10 +63,16 @@ Startup validates but never initializes/truncates state. Only `cache/` is
 disposable, disjoint from canonical `state/`. Setup places verified dependencies
 there and ignores generated cache/bundle files in the dedicated project.
 Keep canonical Git policy in local instructions. Source, config, templates,
-logs and runtime metadata return 404. Loopback is not authentication: other
-local users/processes may read the rendered page. Use only trusted local maps;
-do not expose this development server on a network.
+logs and runtime metadata return 404. **The served HTML embeds every canonical
+Markdown byte in base64**, including hidden HTML comments and text absent from
+the visible diagram. Anyone able to read the page can recover the whole file;
+raw-source 404s do not make it confidential. Include only material approved for
+that local view. Loopback is not authentication: other local users/processes
+can read it. Do not expose this development server on a network.
 
+Foreign/unsupported lifecycle records are rejected without replacement; valid
+site-associated stale records allow normal restart. Ordinary documented Python
+commands suppress local bytecode writes inside the installed skill.
 One detached Zola process owns the lock; no Python supervisor remains. It
 survives launcher/session cleanup, not reboot. An occupied port or duplicate
 launch fails without replacing anything. `--port` selects another unprivileged

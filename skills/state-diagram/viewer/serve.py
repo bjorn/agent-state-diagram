@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Start, inspect or stop one owned loopback Zola viewer. Never initialize state."""
 
+import sys
+sys.dont_write_bytecode = True  # Installed skill payload stays unchanged without requiring -B.
+
 import argparse
 import fcntl
 import http.client
@@ -25,16 +28,13 @@ def identity(pid):
 
 
 def command(site, port):
-    if not isinstance(port, int) or not 1024 <= port <= 65535:
-        raise ValueError("Use an unprivileged port between 1024 and 65535")
-    return [str(site / "cache/tools/zola"), "--root", str(site), "serve",
-            "--interface", "127.0.0.1", "--port", str(port),
-            "--output-dir", str(site / "cache/public"), "--force", "--debounce", "100",
-            "--extra-watch-path", "state"]
+    return c.command(site, port)
 
 
 def owned(site):
-    info = json.loads(c.regular(site / "cache/lifecycle.json").read_text())
+    info = c.lifecycle_record(site)
+    if info is None:
+        raise ValueError("Missing lifecycle record")
     actual = identity(info["pid"])
     expected = command(site, info["port"])
     if (info["site"] != str(site) or info["command"] != expected
@@ -76,6 +76,7 @@ def status(site):
 
 def validate(site):
     site = c.layout(site)
+    c.lifecycle_record(site)
     digest = c.sha256(c.source_bytes(site / "state/state.md"))
     for name, data in c.authored_assets().items():
         if c.regular(site / name).read_bytes() != data:
@@ -98,6 +99,7 @@ def start(site, port=1117):
     public.mkdir(mode=0o700, exist_ok=True)
     with (runtime / "lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        c.lifecycle_record(site)
         # An occupied port is never permission to replace another service.
         with socket.socket() as probe:
             probe.bind(("127.0.0.1", port))
@@ -109,6 +111,7 @@ def start(site, port=1117):
             info = identity(process.pid)
             info.update(site=str(site), port=port, command=args,
                         source_sha256_at_start=digest, started_at=time.time())
+            c.lifecycle_record(site)
             c.atomic_json(runtime / "lifecycle.json", info)
             deadline = time.monotonic() + 8
             while time.monotonic() < deadline:

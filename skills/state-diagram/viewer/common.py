@@ -1,6 +1,8 @@
 """Shared pins and filesystem boundaries. Python standard library only."""
 
 import hashlib
+import json
+import math
 import os
 from pathlib import Path
 import re
@@ -80,6 +82,45 @@ def project(site):
     return site
 
 
+def command(site, port):
+    if type(port) is not int or not 1024 <= port <= 65535:
+        raise ValueError("Use an unprivileged port between 1024 and 65535")
+    return [str(site / "cache/tools/zola"), "--root", str(site), "serve",
+            "--interface", "127.0.0.1", "--port", str(port),
+            "--output-dir", str(site / "cache/public"), "--force", "--debounce", "100",
+            "--extra-watch-path", "state"]
+
+
+def lifecycle_record(site):
+    """Accept this writer's exact site-associated format, including stale records."""
+    path = unaliased(site / "cache/lifecycle.json")
+    if not path.exists():
+        return None
+    fields = {"pid", "state", "ppid", "pgid", "sid", "start_ticks", "command",
+              "site", "port", "source_sha256_at_start", "started_at"}
+    try:
+        raw = regular(path).read_bytes()
+        if len(raw) > 65536:
+            raise ValueError("Oversized lifecycle record")
+        info = json.loads(raw)
+        if (not isinstance(info, dict) or set(info) != fields
+                or info["site"] != str(site)
+                or any(type(info[k]) is not int or info[k] <= 0 for k in ("pid", "ppid", "pgid", "sid"))
+                or not info["pid"] == info["pgid"] == info["sid"]
+                or not isinstance(info["state"], str) or info["state"] not in set("RSDZTWtXxKPI")
+                or not isinstance(info["start_ticks"], str) or not re.fullmatch(r"[0-9]+", info["start_ticks"])
+                or type(info["started_at"]) not in (int, float)
+                or not math.isfinite(info["started_at"]) or info["started_at"] <= 0
+                or not isinstance(info["source_sha256_at_start"], str)
+                or not re.fullmatch(r"[a-f0-9]{64}", info["source_sha256_at_start"])
+                or info["command"] != command(site, info["port"])):
+            raise ValueError("Unsupported lifecycle ownership/schema")
+    except (ValueError, TypeError, KeyError, OverflowError) as error:
+        raise ValueError("Foreign or unsupported lifecycle record; refusing to replace it") from error
+    # No liveness/current-source requirement: legitimate stopped records can restart.
+    return info
+
+
 def authored_assets():
     return {
         "config.toml": CONFIG,
@@ -141,7 +182,6 @@ def write_owned(path, data, executable=False):
 
 
 def atomic_json(path, data):
-    import json
     path = unaliased(path)
     if path.exists():
         regular(path)

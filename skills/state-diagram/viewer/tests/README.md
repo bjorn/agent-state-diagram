@@ -28,11 +28,15 @@ Tests do not install any of these tools.
 
 `test_portable.py` copies **only this skill directory** into a temporary install,
 uses an unrelated workspace with spaces, runs offline setup and launches on an
-owned free loopback port. It kills the outer launcher session, checks detached
+owned free loopback port. Its writable installed copy runs ordinary documented
+Python calls without `-B` or bytecode-suppression environment variables; full
+payload inventories must stay unchanged. It kills the outer launcher session, checks detached
 survival, duplicate rejection, private 404s and real in-place/atomic/subsequent
 rebuilds. With `PUPPETEER_MODULE`, it also runs `live.mjs` for local assets,
 source/served/body/SVG hashes, LiveReload, switches, themes, gestures and mobile.
 The owned process is stopped and the temporary project removed even on failure.
+It also restarts from the legitimate stale lifecycle record. Focused unit cases
+reject foreign lifecycle data before setup/spawn while preserving its exact bytes.
 
 Serverless suites cover pending/stale/failed renders, last-success local time,
 Fit width/manual choices, OS/stored/blocked-storage themes, dark shadow pixels,
