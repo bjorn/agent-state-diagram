@@ -4,9 +4,9 @@ A portable assistant skill for keeping a Mermaid map of current tasks, TODO
 lists and optional helper assistants. It works with one assistant; delegation
 and a browser dashboard are not prerequisites.
 
-This core-only package includes the skill, documentation and fictional examples.
-It is licensed under [MIT](LICENSE). No viewer implementation, screenshot or
-private project integration is bundled.
+This MIT package includes the skill, fictional examples and an optional local
+Zola/Mermaid viewer. No live work state, generated dependency bundle or private
+project integration is bundled.
 
 ## Install manually
 
@@ -45,10 +45,11 @@ Expected installation layout, where the outer directory is supplied by the host:
     examples/
       state.md
       single-assistant.md
+    viewer/                 # optional setup, runtime, UI, tests and guide
 ```
 
-There is no repository-specific installer, package-manager command, required
-provider API or automatic startup-file edit. For a host without skill discovery,
+There is no required provider API or automatic startup-file edit.
+For a host without skill discovery,
 keep the directory as reference material and explicitly ask the assistant to
 read its `SKILL.md`. Automatic invocation is then not guaranteed.
 
@@ -69,10 +70,17 @@ The core is Markdown and has no executable runtime dependencies. A
 Mermaid-capable viewer is optional. Use locally approved tooling and distinguish
 a saved source from a verified rendered view.
 
-No viewer implementation, third-party bundle, browser cache or dependency
-lockfile is included. A proposed isolated viewer boundary is documented in
-[the viewer plan](docs/viewer-boundary.md). Viewer design is work in progress;
-the plan is not an implementation or an installation promise.
+For the live viewer, ask your assistant:
+
+> Set up the installed state-diagram skill's optional local viewer. Follow its
+> setup guide; ask before downloads, service startup, or creating/moving state.
+> Preserve my existing canonical map and project instructions.
+
+The [setup guide](skills/state-diagram/viewer/README.md) has the actual commands,
+offline asset options and host requirements. Everything required is inside
+`skills/state-diagram/`, so copying/installing only that directory is sufficient.
+The viewer adds local Fit width, dark mode, zoom/pan and successful-render time;
+it is not required by the core skill.
 
 ## Compatibility and license
 
@@ -80,6 +88,6 @@ Manual copying preserves the skill's portable layout. Verify discovery and
 invocation in the receiving host before relying on automatic updates; no
 host-specific installer or cross-host compatibility certification is supplied.
 
-The [MIT license](LICENSE) covers this package's skill, documentation and
-examples. Any future third-party viewer assets require their own license and
-notice review.
+The [MIT license](LICENSE) covers this package's authored code and prose.
+Third-party assets are obtained separately with pinned integrity checks;
+see [viewer notices](skills/state-diagram/viewer/NOTICES.md).

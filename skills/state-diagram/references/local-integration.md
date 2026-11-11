@@ -34,6 +34,8 @@ success; record the condition before removing it from active work.
 
 Select an already approved renderer, or leave rendering unverified.
 Installation, download and service lifecycle decisions remain local.
+The optional [local viewer guide](../viewer/README.md) supplies setup and
+freshness checks without requiring a provider-specific configuration.
 
 A live view should distinguish the canonical bytes, served bytes and rendered
 diagram. Where supported, compare a source digest through those stages, allow

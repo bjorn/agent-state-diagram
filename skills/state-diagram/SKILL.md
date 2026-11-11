@@ -33,6 +33,10 @@ A single assistant uses the same map without helper boxes.
    wait; otherwise report “source checked; rendering unverified.” A saved file
    alone does not prove that a browser is current.
 
+For optional live-viewer setup, follow the [setup guide](viewer/README.md).
+Renderer setup is a separate approval decision; the update steps also work
+without it.
+
 An update is complete when the source matches the observed work and any gaps
 or pending view checks are explicit. If editing is not authorized, return a
 proposed map instead of claiming the canonical source was updated.

@@ -1,0 +1,72 @@
+{% set source = load_data(path="state/state.md", format="plain") %}
+{% set source_hash = get_hash(literal=source, sha_type=256, base64=false) %}
+{% set port = "1117" %}
+{% set url_parts = config.base_url | replace(from="/", to="") | split(pat=":") %}
+{% if url_parts | length == 3 %}{% set port = url_parts | last %}{% endif %}
+{% set reload_setup = "window.LiveReloadOptions={host:window.location.hostname,port:" ~ port ~ ",mindelay:10};" %}
+{% set reload_hash = get_hash(literal=reload_setup, sha_type=256, base64=true) %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; font-src 'none'; style-src 'unsafe-inline'; script-src 'self' 'sha256-{{ reload_hash }}'; connect-src ws://127.0.0.1:{{ port }}">
+  <meta name="state-source-sha256" content="{{ source_hash }}">
+  <meta name="state-source-base64" content="{{ source | base64_encode }}">
+  <title>State</title>
+  <style>
+    :root { color-scheme: light; --page: #f4f6f8; --surface: #fff; --text: #202830; --muted: #57606a; --border: #d8dee4; --focus: #0969da; --thumb: #fff; font: 14px/1.4 system-ui, sans-serif; color: var(--text); background: var(--page); }
+    :root[data-theme="dark"] { color-scheme: dark; --page: #0d1117; --surface: #161b22; --text: #e6edf3; --muted: #adb8c4; --border: #647181; --focus: #79c0ff; --thumb: #0d1117; }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme]) { color-scheme: dark; --page: #0d1117; --surface: #161b22; --text: #e6edf3; --muted: #adb8c4; --border: #647181; --focus: #79c0ff; --thumb: #0d1117; }
+    }
+    body { margin: 0; }
+    header { position: sticky; top: 0; z-index: 1; display: flex; gap: .6rem 1rem; align-items: center; flex-wrap: wrap; padding: .55rem 1rem; background: var(--surface); border-bottom: 1px solid var(--border); }
+    #status { color: var(--muted); }
+    .controls { display: grid; grid-template-columns: repeat(2, 1fr); gap: .5rem; margin-left: auto; }
+    .toggle { position: relative; display: inline-flex; align-items: center; gap: .45rem; box-sizing: border-box; min-height: 2.4rem; padding: .35rem .6rem; border: 1px solid var(--border); border-radius: .5rem; cursor: pointer; white-space: nowrap; }
+    .toggle:hover { background: var(--page); }
+    .toggle:has(input:checked) { border-color: var(--focus); }
+    .toggle:has(input:focus-visible) { outline: 2px solid var(--focus); outline-offset: 3px; }
+    .toggle input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+    .toggle > span { pointer-events: none; }
+    .toggle-track { position: relative; width: 1.85rem; height: 1.05rem; flex: none; margin-left: auto; border-radius: 1rem; background: var(--muted); }
+    .toggle-track::after { content: ""; position: absolute; top: .15rem; left: .15rem; width: .75rem; height: .75rem; border-radius: 50%; background: var(--thumb); }
+    input:checked ~ .toggle-track { background: var(--focus); }
+    input:checked ~ .toggle-track::after { transform: translateX(.8rem); }
+    main { overflow: auto; padding: .6rem; }
+    main[data-diagram-panning] #diagram,
+    main[data-diagram-panning] #diagram * { cursor: grabbing !important; user-select: none !important; }
+    #markdown > h1 { display: none; }
+    pre { white-space: pre-wrap; }
+    #diagram { display: flow-root; }
+    #diagram > svg { display: block; width: var(--diagram-width); max-width: none; height: auto; background: var(--surface); }
+    #diagram > svg[data-theme="light"] { --surface: #fff; }
+    #diagram > svg[data-theme="dark"] { --surface: #161b22; --text: #e6edf3; }
+    body:has(#fit:checked) #diagram > svg { width: 100%; }
+    /* Canonical classDef colors are light. Override only the displayed dark SVG. */
+    #diagram > svg[data-theme="dark"] .node.pending { --node-fill: #303943; --node-stroke: #8c9aa8; }
+    #diagram > svg[data-theme="dark"] .node.running { --node-fill: #153754; --node-stroke: #58a6ff; }
+    #diagram > svg[data-theme="dark"] .node.waiting { --node-fill: #473815; --node-stroke: #e3b341; }
+    #diagram > svg[data-theme="dark"] .node.blocked { --node-fill: #4c2428; --node-stroke: #ff7b72; }
+    #diagram > svg[data-theme="dark"] .node.done { --node-fill: #173c2a; --node-stroke: #56d364; }
+    #diagram > svg[data-theme="dark"] .node:is(.pending, .running, .waiting, .blocked, .done) :is(rect, polygon, path, circle, ellipse) { fill: var(--node-fill) !important; stroke: var(--node-stroke) !important; }
+    #diagram > svg[data-theme="dark"] :is(.nodeLabel, .edgeLabel, .cluster-label) { color: var(--text) !important; }
+    #diagram > svg[data-theme="dark"] text { fill: var(--text) !important; }
+  </style>
+  <script defer src="/mermaid-12.3.0.min.js"></script>
+  <script defer src="/dashboard.js"></script>
+</head>
+<body>
+  <header>
+    <span id="status" role="status">Last refresh: <time id="last-refresh">Not yet</time></span>
+    <span id="render-error" role="alert" hidden></span>
+    <div class="controls" role="group" aria-label="Diagram display">
+      <label class="toggle"><input id="fit" type="checkbox" role="switch" checked><span>Fit width</span><span class="toggle-track" aria-hidden="true"></span></label>
+      <label class="toggle"><input id="theme" type="checkbox" role="switch"><span>Dark mode</span><span class="toggle-track" aria-hidden="true"></span></label>
+    </div>
+  </header>
+  <main id="markdown">{{ source | markdown | safe }}</main>
+</body>
+</html>
