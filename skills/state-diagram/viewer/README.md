@@ -45,7 +45,9 @@ python3 "$SKILL/viewer/viewer.py" stop --runtime ./state-view
 That proves served freshness, not browser completion: after a successful
 render the page sets `data-source-sha256` on `body` and on the SVG. The header
 shows the local time of the last successful render; failed renders leave it
-unchanged and keep the source text readable.
+unchanged and keep the source text readable. **View source** shows the
+canonical Markdown in place of the diagram; the choice lasts for the browser
+tab, across live reloads.
 
 One detached server process runs per runtime directory and holds its `lock`
 file for as long as it lives. It survives the launching session but not a
@@ -70,4 +72,6 @@ repository root). After changing the page, check in a browser:
    shows an error with the source text; fixing it recovers.
 3. Fit width, wheel zoom at the cursor and drag panning work.
 4. Dark mode keeps status colors readable, and the choice survives a reload.
-5. After `stop` and `start`, an open page reconnects and follows the next edit.
+5. View source shows the Markdown, stays on after an edit reloads the page,
+   and switching it off shows the diagram again, fitted to the width.
+6. After `stop` and `start`, an open page reconnects and follows the next edit.

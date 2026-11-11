@@ -192,6 +192,12 @@
   const source = document.querySelector("#source");
   const digest = document.querySelector('meta[name="state-source-sha256"]').content;
   watchSource(digest);
+  // The page reloads on every edit, so keep this choice for the tab's session.
+  const viewSource = document.querySelector("#view-source");
+  try { viewSource.checked = sessionStorage.getItem("state-view-source") === "on"; } catch { /* Storage may be disabled. */ }
+  viewSource.addEventListener("change", () => {
+    try { sessionStorage.setItem("state-view-source", viewSource.checked ? "on" : "off"); } catch { /* Keep the in-page choice. */ }
+  });
   try {
     const blocks = [...source.textContent.matchAll(/^```mermaid[ \t]*\n([\s\S]*?)^```[ \t]*$/gm)];
     if (blocks.length !== 1) throw new Error("Expected one Mermaid fence");
@@ -200,6 +206,7 @@
       viewport: document.querySelector("main"), fit: document.querySelector("#fit"),
       isReady: svg => document.body.dataset.sourceSha256 === digest && svg.dataset.sourceSha256 === digest,
     });
+    viewSource.addEventListener("change", () => gestures.afterRender()); // Re-center the shown diagram.
     let requested = 0;
     let completed = 0;
     let busy = false;
@@ -256,7 +263,9 @@
             svg.dataset.sourceSha256 = digest;
             svg.dataset.theme = renderedTheme;
             const scroll = gestures.beforeRender();
-            (document.querySelector("#diagram") || source).replaceWith(diagram);
+            const previous = document.querySelector("#diagram");
+            if (previous) previous.replaceWith(diagram);
+            else source.before(diagram); // Keep the source for View source and failed renders.
             gestures.afterRender(scroll);
             delete document.body.dataset.renderError;
             document.body.dataset.sourceSha256 = digest;
