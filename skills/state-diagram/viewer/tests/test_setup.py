@@ -7,6 +7,7 @@ import os
 import shutil
 import socket
 import subprocess
+import tarfile
 import unittest
 from unittest.mock import patch
 
@@ -86,11 +87,34 @@ class SetupTests(unittest.TestCase):
             download.assert_not_called()
         self.assertFalse((self.site / "cache").exists())
 
-    def test_opt_in_uses_only_pinned_obtain_path(self):
-        cached = self.root / "absent"
-        with patch.object(installer, "zola_archive", return_value=b"verified") as get:
-            self.assertEqual(installer.obtain(None, cached, "pin", None, 0, True), b"verified")
-            get.assert_called_once_with()
+    def test_opt_in_archive_requires_one_regular_pinned_binary(self):
+        binary = self.local["zola"].read_bytes()
+        for names, kind, contents, error in (
+            (["./zola"], tarfile.REGTYPE, binary, None),
+            (["zola"], tarfile.REGTYPE, b"wrong binary", "SHA-256"),
+            (["zola", "./zola"], tarfile.REGTYPE, binary, "one bounded regular"),
+            (["zola"], tarfile.SYMTYPE, b"", "one bounded regular"),
+            (["unrelated"], tarfile.REGTYPE, binary, "one bounded regular"),
+        ):
+            with self.subTest(names=names, kind=kind, error=error):
+                buffer = io.BytesIO()
+                with tarfile.open(fileobj=buffer, mode="w:gz") as archive:
+                    for name in names:
+                        member = tarfile.TarInfo(name)
+                        member.type, member.size = kind, len(contents)
+                        archive.addfile(member, io.BytesIO(contents))
+                data = buffer.getvalue()
+                class Response(io.BytesIO):
+                    def geturl(self):
+                        return c.ARCHIVE_URL
+                with patch.object(c, "ARCHIVE_SHA256", c.sha256(data)), \
+                        patch.object(installer.urllib.request, "urlopen", return_value=Response(data)):
+                    if error:
+                        with self.assertRaisesRegex(ValueError, error):
+                            installer.obtain(None, self.root / "absent", c.ZOLA_SHA256, None, 0, True)
+                    else:
+                        self.assertEqual(installer.obtain(
+                            None, self.root / "absent", c.ZOLA_SHA256, None, 0, True), binary)
 
     def test_corrupt_local_asset_never_falls_back_to_network(self):
         self.create_source()
@@ -185,15 +209,51 @@ class SetupTests(unittest.TestCase):
 
     def test_status_and_stop_reject_unowned_process_before_http_or_signal(self):
         self.prepare(init_example=True)
-        c.atomic_json(self.site / "cache/lifecycle.json",
-                      {"pid": 1, "site": str(self.site), "port": 1117,
-                       "command": ["unrelated"], "start_ticks": "0"})
-        with patch.object(serve, "served_digest") as http, patch.object(serve.os, "pidfd_open") as signal:
-            self.assertFalse(serve.status(self.site)["alive"])
-            with self.assertRaises(ValueError):
-                serve.stop(self.site)
-            http.assert_not_called()
-            signal.assert_not_called()
+        # A real, safely owned echo child stands in for an unrelated live process.
+        # Only identity/pidfd/signal boundaries are mocked; the site/record are valid.
+        with subprocess.Popen([sys.executable, "-u", "-c",
+                               "import sys\nfor line in sys.stdin: print(line.strip(), flush=True)"],
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                              start_new_session=True) as child:
+            actual = serve.identity(child.pid)
+            record = self.stale_record()
+            record.update({key: actual[key] for key in
+                           ("pid", "ppid", "pgid", "sid", "state", "start_ticks")})
+            path = self.site / "cache/lifecycle.json"
+            c.atomic_json(path, record)
+            before = path.read_bytes(), path.stat().st_ino, path.stat().st_mtime_ns
+            self.assertEqual(c.lifecycle_record(self.site), record)  # Past schema validation.
+            matching = dict(actual, command=record["command"])
+            for mismatch in (actual, dict(matching, start_ticks=str(int(actual["start_ticks"]) + 1)),
+                             dict(matching, state="Z")):
+                with self.subTest(identity=mismatch), \
+                        patch.object(serve, "identity", return_value=mismatch) as identity, \
+                        patch.object(serve, "served_digest", return_value=c.sha256(self.source.read_bytes())) as http, \
+                        patch.object(serve.os, "pidfd_open") as pidfd, \
+                        patch.object(serve.signal, "pidfd_send_signal") as send:
+                    self.assertFalse(serve.status(self.site)["alive"])
+                    with self.assertRaisesRegex(ValueError, "live process"):
+                        serve.stop(self.site)
+                    identity.assert_called()
+                    http.assert_not_called()
+                    pidfd.assert_not_called()
+                    send.assert_not_called()
+            # Identity can change after the first ownership check, before signaling.
+            with patch.object(serve, "identity", side_effect=[matching, actual, dict(actual, state="Z")]), \
+                    patch.object(serve.os, "pidfd_open") as pidfd, \
+                    patch.object(serve.os, "close"), \
+                    patch.object(serve, "served_digest") as http, \
+                    patch.object(serve.signal, "pidfd_send_signal") as send:
+                with self.assertRaisesRegex(ValueError, "live process"):
+                    serve.stop(self.site)
+                pidfd.assert_called()
+                http.assert_not_called()
+                send.assert_not_called()
+            self.assertEqual((path.read_bytes(), path.stat().st_ino, path.stat().st_mtime_ns), before)
+            self.assertIsNone(child.poll())
+            child.stdin.write(b"foreign child still responds\n")
+            child.stdin.flush()
+            self.assertEqual(child.stdout.readline(), b"foreign child still responds\n")
 
     def stale_record(self):
         return {"pid": 999999999, "ppid": 1, "pgid": 999999999, "sid": 999999999,
@@ -232,11 +292,19 @@ class SetupTests(unittest.TestCase):
         path = self.site / "cache/lifecycle.json"
         data = b'{"foreign":"keep this"}\r\n'
         path.write_bytes(data)
-        with patch.object(serve.subprocess, "Popen") as spawn, patch.object(serve.socket, "socket") as bind:
+        with patch.object(serve.subprocess, "Popen") as spawn, patch.object(serve.socket, "socket") as bind, \
+                patch.object(serve, "served_digest") as http, patch.object(serve.os, "pidfd_open") as pidfd, \
+                patch.object(serve.signal, "pidfd_send_signal") as send:
             with self.assertRaisesRegex(ValueError, "Foreign"):
                 serve.start(self.site)
+            self.assertFalse(serve.status(self.site)["alive"])
+            with self.assertRaisesRegex(ValueError, "Foreign"):
+                serve.stop(self.site)
             spawn.assert_not_called()
             bind.assert_not_called()
+            http.assert_not_called()
+            pidfd.assert_not_called()
+            send.assert_not_called()
         self.assertEqual(path.read_bytes(), data)
         self.assertFalse((self.site / "cache/lock").exists())
         self.assertFalse((self.site / "cache/public").exists())
@@ -277,21 +345,25 @@ class SetupTests(unittest.TestCase):
     def test_record_rechecked_under_lock_before_spawning(self):
         self.prepare(init_example=True)
         path = self.site / "cache/lifecycle.json"
-        original = c.lifecycle_record
-        calls = 0
-        data = b'{"foreign":"arrived while waiting for lock"}\n'
-        def check(site):
-            nonlocal calls
-            calls += 1
-            if calls == 2:
-                path.write_bytes(data)
-            return original(site)
-        with patch.object(c, "lifecycle_record", side_effect=check), \
-                patch.object(serve.subprocess, "Popen") as spawn:
+        c.atomic_json(path, self.stale_record())
+        source = self.source.read_bytes()
+        original = serve.fcntl.flock
+        data = b'{"foreign":"arrived at lock acquisition"}\r\n'
+        arrived = []
+        def acquire(fd, operation):
+            original(fd, operation)  # Real lock, deterministic arrival before returning to start().
+            path.write_bytes(data)
+            arrived.append((path.stat().st_ino, path.stat().st_mtime_ns))
+        with patch.object(serve.fcntl, "flock", side_effect=acquire), \
+                patch.object(serve.socket, "socket"), \
+                patch.object(serve.subprocess, "Popen",
+                             side_effect=AssertionError("Spawn attempted with foreign lifecycle")) as spawn:
             with self.assertRaisesRegex(ValueError, "Foreign"):
                 serve.start(self.site)
             spawn.assert_not_called()
         self.assertEqual(path.read_bytes(), data)
+        self.assertEqual((path.stat().st_ino, path.stat().st_mtime_ns), arrived[0])
+        self.assertEqual(self.source.read_bytes(), source)
 
     def test_documented_help_calls_do_not_write_writable_installed_payload(self):
         skill = self.root / "installed/state-diagram"
@@ -323,6 +395,10 @@ class SetupTests(unittest.TestCase):
             with patch.object(installer.urllib.request, "urlopen", return_value=Response(value)):
                 with self.assertRaises(ValueError):
                     installer.download("https://example.invalid/asset", digest, maximum)
+        with patch.object(Response, "geturl", return_value="http://example.invalid/redirected"), \
+                patch.object(installer.urllib.request, "urlopen", return_value=Response(b"good")):
+            with self.assertRaisesRegex(ValueError, "non-HTTPS redirect"):
+                installer.download("https://example.invalid/asset", c.sha256(b"good"), 10)
 
 
 if __name__ == "__main__":

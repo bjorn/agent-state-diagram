@@ -1,4 +1,4 @@
-"""Real tools, copied skill, unrelated cwd; only synthetic source and owned ports."""
+"""One staged copied-skill journey; only synthetic source and owned ports/processes."""
 import base64
 import hashlib
 import http.client
@@ -18,6 +18,12 @@ import unittest
 
 
 TOOLS = ("STATE_DIAGRAM_ZOLA", "STATE_DIAGRAM_MERMAID", "STATE_DIAGRAM_MERMAID_LICENSE")
+
+if os.environ.get("STATE_DIAGRAM_FULL_TESTS") == "1":
+    missing = [name for name in (*TOOLS, "PUPPETEER_MODULE", "PUPPETEER_EXECUTABLE_PATH")
+               if not os.environ.get(name)]
+    if missing:
+        raise RuntimeError("Full lane requires existing cached tools: " + ", ".join(missing))
 
 
 @unittest.skipUnless(all(os.environ.get(k) for k in TOOLS), "Supply existing pinned tools; no downloads")
@@ -140,7 +146,7 @@ class CopiedSkillTests(unittest.TestCase):
         self.assertTrue(current["source_current"])
         self.assertEqual(current["pid"], current["sid"])
         self.assertEqual(current["pid"], current["pgid"])
-        self.assertEqual(current["ppid"], 1)
+        self.assertEqual(current["pid"], self.started["pid"])  # Subreapers need not reparent to PID 1.
         self.assertEqual(self.source.read_bytes(), self.initial)
         self.assertEqual(self.source.stat().st_ino, self.initial_stat.st_ino)
         self.assertEqual(self.source.stat().st_mtime_ns, self.initial_stat.st_mtime_ns)
@@ -205,8 +211,8 @@ class CopiedSkillTests(unittest.TestCase):
     def test_04_real_browser_local_assets_and_gestures(self):
         node = shlex.split(os.environ.get("STATE_DIAGRAM_NODE", "node"))
         subprocess.run([*node, str(self.viewer / "tests/live.mjs"),
-                        f"http://127.0.0.1:{self.port}", str(self.source)],
-                       cwd=self.workspace, check=True, timeout=40)
+                        f"http://127.0.0.1:{self.port}", str(self.source), sys.executable],
+                       cwd=self.workspace, env=self.cli_env, check=True, timeout=50)
         self.proof["browser"] = True
 
     def test_05_legitimate_stale_record_supports_real_restart(self):

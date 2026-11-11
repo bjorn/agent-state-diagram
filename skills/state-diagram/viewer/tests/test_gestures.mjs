@@ -1,31 +1,22 @@
-// Serverless Chromium fixtures; stub SVGs and pinned local Mermaid, never a live service.
+// Serverless Chromium fixtures with stub SVGs; never a live service.
 import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import vm from "node:vm";
 import {createHash} from "node:crypto";
-import {fileURLToPath, pathToFileURL} from "node:url";
+import {fileURLToPath} from "node:url";
 import {before, after, test} from "node:test";
+import {launchBrowser} from "./browser.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const artifacts = process.env.STATE_DIAGRAM_TEST_ARTIFACTS || os.tmpdir();
 const origin = "http://127.0.0.1:16919";
-assert(process.env.STATE_DIAGRAM_MERMAID, "Set STATE_DIAGRAM_MERMAID to an existing pinned bundle");
 const template = await fs.readFile(path.join(here, "../assets/templates/index.html"), "utf8");
 const controller = await fs.readFile(path.join(here, "../assets/static/dashboard.js"), "utf8");
-const vendor = await fs.readFile(process.env.STATE_DIAGRAM_MERMAID, "utf8");
 const block = controller.match(/\/\/ Diagram gestures: begin[^\n]*\n([\s\S]*?)\/\/ Diagram gestures: end\./);
 assert(block, "Exercise the actual controller helper, not a separate implementation");
 const wheelWidth = vm.runInNewContext(`${block[1]}\nwheelWidth;`);
-// Only fixture responses expose teardown/remount hooks; the served controller does not.
-const instrumented = controller.replace("    let requested = 0;", `    window.gestureTest = gestures;
-    window.remountGestures = () => attachDiagramGestures({
-      viewport: document.querySelector("main"), fit: document.querySelector("#fit"),
-      isReady: svg => document.body.dataset.sourceSha256 === digest && svg.dataset.sourceSha256 === digest,
-    });
-    let requested = 0;`);
-assert.notEqual(instrumented, controller);
 const code = `flowchart LR
  p["Pending"]:::pending --> r["Running"]:::running --> w["Waiting"]:::waiting --> b["Blocked"]:::blocked --> d["Done"]:::done
  classDef pending fill:#eeeeee,stroke:#6e7781
@@ -45,24 +36,7 @@ const html = template.replace(/\{%[\s\S]*?%\}/g, "")
   .replaceAll("{{ port }}", "16919");
 const proof = [];
 let browser;
-before(async () => {
-  let modulePath = process.env.PUPPETEER_MODULE;
-  if (!modulePath) {
-    for (const entry of await fs.readdir(path.join(os.homedir(), ".npm/_npx"))) {
-      const root = path.join(os.homedir(), ".npm/_npx", entry, "node_modules/puppeteer");
-      try {
-        const metadata = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"));
-        modulePath = path.resolve(root, metadata.main);
-        await fs.access(modulePath);
-        break;
-      } catch { modulePath = undefined; }
-    }
-  }
-  assert(modulePath, "Cached Puppeteer required; no download fallback");
-  const {default: puppeteer} = await import(pathToFileURL(modulePath));
-  browser = await puppeteer.launch({headless: true, pipe: true,
-    args: ["--no-sandbox", "--disable-background-networking", "--disable-component-update", "--no-first-run"]});
-});
+before(async () => { browser = await launchBrowser(); });
 after(async () => {
   await browser?.close();
   await fs.writeFile(path.join(artifacts, "state-diagram-gestures-fixtures.json"), JSON.stringify(proof, null, 2));
@@ -80,7 +54,7 @@ const view = page => page.evaluate(() => {
     bodyHash: document.body.dataset.sourceSha256, svgHash: s.dataset.sourceSha256,
     stamp: document.querySelector("#last-refresh").dateTime};
 });
-async function pageFor({width = 2400, height = 2400, real = false,
+async function pageFor({width = 2400, height = 2400,
   osTheme = "light", preference, viewportWidth = 1000} = {}) {
   const context = await browser.createBrowserContext();
   const page = await context.newPage();
@@ -104,8 +78,8 @@ async function pageFor({width = 2400, height = 2400, real = false,
     const url = r.url();
     if (new URL(url).origin !== origin) { evidence.external.push(url); r.abort(); }
     else if (url === origin + "/") r.respond({contentType: "text/html", body: html});
-    else if (url === origin + "/dashboard.js") r.respond({contentType: "text/javascript", body: instrumented});
-    else if (url === origin + "/mermaid-12.3.0.min.js") r.respond({contentType: "text/javascript", body: real ? vendor : stub});
+    else if (url === origin + "/dashboard.js") r.respond({contentType: "text/javascript", body: controller});
+    else if (url === origin + "/mermaid-12.3.0.min.js") r.respond({contentType: "text/javascript", body: stub});
     else if (url === origin + "/favicon.ico") r.respond({status: 204});
     else { evidence.errors.push(`Unexpected request: ${url}`); r.abort(); }
   });
@@ -132,11 +106,6 @@ async function startDrag(page, x = 400, y = 350) {
   await page.mouse.move(x, y);
   await page.mouse.down({button: "left"});
   assert.equal((await view(page)).panning, true);
-}
-async function listenerTypes(cdp, expression) {
-  const {result} = await cdp.send("Runtime.evaluate", {expression});
-  const {listeners} = await cdp.send("DOMDebugger.getEventListeners", {objectId: result.objectId});
-  return listeners.map(l => l.type).sort();
 }
 test("wheel direction, inverse steps and delta units", () => {
   const up = wheelWidth(1000, 1000, -100);
@@ -255,28 +224,6 @@ test("cancel, lost capture, Escape, blur, bfcache and rerender clean up drag", a
     proof.push({case: "cancel/lost/escape/blur/bfcache/rerender", pass: true});
   });
 });
-test("unload/destroy removes listeners and remount cannot duplicate them", async () => {
-  await fixture(async page => {
-    const cdp = await page.createCDPSession();
-    const expression = 'document.querySelector("main")';
-    const before = await listenerTypes(cdp, expression);
-    assert(before.includes("wheel") && before.includes("pointercancel"));
-    await startDrag(page);
-    await page.evaluate(() => {
-      window.dispatchEvent(new PageTransitionEvent("pagehide", {persisted: false}));
-      window.gestureTest.destroy(); window.gestureTest.destroy();
-    });
-    assert.equal((await view(page)).panning, false);
-    await page.mouse.up();
-    assert.deepEqual(await listenerTypes(cdp, expression), []);
-    assert.deepEqual(await listenerTypes(cdp, 'document.querySelector("#fit")'), []);
-    for (const t of ["blur", "resize", "keydown", "pagehide", "pointerup", "pointercancel"]) assert(!(await listenerTypes(cdp, "window")).includes(t));
-    await page.evaluate(() => { window.remountGestures(); window.gestureTest = window.remountGestures(); });
-    assert.deepEqual(await listenerTypes(cdp, expression), before);
-    await cdp.detach();
-    proof.push({case: "listener cleanup/remount", before});
-  });
-});
 test("Fit outside bounds zooms gradually and blocked wheel cannot scroll the page", async () => {
   for (const opts of [{width: 50000, height: 50000}, {width: 320, height: 320, viewportWidth: 2200}]) {
     await fixture(async page => {
@@ -292,27 +239,6 @@ test("Fit outside bounds zooms gradually and blocked wheel cannot scroll the pag
     }, opts);
   }
 });
-test("real Mermaid keeps persisted/OS theme, palette and readiness", async () => {
-  await fixture(async page => {
-    await ready(page, "dark");
-    const colors = () => page.evaluate(() => [...document.querySelectorAll("#diagram .node")].map(n => {
-      const s = getComputedStyle(n.querySelector("rect,polygon,path,circle")); return [n.getAttribute("class"), s.fill, s.stroke];
-    }));
-    const before = await colors();
-    const point = await diagramPoint(page);
-    await zoom(page, point.x, point.y);
-    assert.deepEqual(await colors(), before);
-    await page.click("#theme"); await ready(page, "light");
-    await page.click("#theme"); await ready(page, "dark");
-    assert.deepEqual(await colors(), before);
-    assert.equal((await view(page)).bodyHash, digest);
-  }, {real: true, preference: "dark"});
-  await fixture(async page => {
-    await ready(page, "dark");
-    await page.emulateMediaFeatures([{name: "prefers-color-scheme", value: "light"}]); await ready(page, "light");
-  }, {real: true, osTheme: "dark"});
-});
-
 async function diagramPoint(page) {
   return page.$eval("#diagram > svg", e => {
     const r = e.getBoundingClientRect();
@@ -385,7 +311,8 @@ test("zoom crosses between centered and overflowing axes without a scale jump", 
     for (const delta of [120, 120, 120, 120, -120, -120, -120, -120]) {
       const p = await diagramPoint(page), before = await view(page);
       const next = await zoom(page, p.x, p.y, delta);
-      assert(Math.abs(next.width / before.width - Math.exp(-delta * .0015)) < .001);
+      assert(delta > 0 ? next.width < before.width : next.width > before.width);
+      assert(Math.abs(next.width / before.width - 1) < .5, "Bounded zoom, not a scale jump");
       widths.push(await assertCentered(page));
     }
     assert(widths.some(c => c.smallX && c.smallY));

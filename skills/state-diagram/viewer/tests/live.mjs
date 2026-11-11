@@ -3,18 +3,26 @@ import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import {pathToFileURL} from "node:url";
+import {fileURLToPath} from "node:url";
+import {execFile} from "node:child_process";
+import net from "node:net";
+import {promisify} from "node:util";
+import {setTimeout as delay} from "node:timers/promises";
+import {launchBrowser} from "./browser.mjs";
 
-const [origin, sourcePath] = process.argv.slice(2);
+const [origin, sourcePath, python] = process.argv.slice(2);
 assert(/^http:\/\/127\.0\.0\.1:\d+$/.test(origin));
 assert(path.resolve(sourcePath).split(path.sep).some(p => p.startsWith("state-diagram-portable-")),
   "Only the dedicated portable test's synthetic source is writable");
-const {default: puppeteer} = await import(pathToFileURL(process.env.PUPPETEER_MODULE));
+assert(python && path.isAbsolute(python), "The owning Python fixture supplies its interpreter");
+const execute = promisify(execFile);
+const cli = async (...args) => JSON.parse((await execute(python, [
+  fileURLToPath(new URL("../serve.py", import.meta.url)), "--site", path.dirname(path.dirname(sourcePath)),
+  ...args], {timeout: 20000})).stdout);
 const hash = b => createHash("sha256").update(b).digest("hex");
 const original = await fs.readFile(sourcePath);
 const proof = {external: [], pageErrors: [], websocket: [], watch: []};
-const browser = await puppeteer.launch({headless: true, pipe: true,
-  args: ["--no-sandbox", "--disable-background-networking", "--disable-component-update", "--no-first-run"]});
+const browser = await launchBrowser();
 try {
   const page = await browser.newPage();
   await page.setViewport({width: 1000, height: 700});
@@ -28,7 +36,8 @@ try {
   });
   const cdp = await page.createCDPSession();
   await cdp.send("Network.enable");
-  cdp.on("Network.webSocketCreated", e => proof.websocket.push(e.url));
+  const socketIds = new Set();
+  cdp.on("Network.webSocketCreated", e => { socketIds.add(e.requestId); proof.websocket.push(e.url); });
   const ready = async bytes => {
     const digest = hash(bytes);
     await page.waitForFunction(d => document.body.dataset.sourceSha256 === d &&
@@ -68,7 +77,7 @@ try {
   await page.keyboard.press("Space");
   assert.equal(await page.$eval("#fit", e => e.checked), false);
   await page.setViewport({width: 900, height: 700});
-  await new Promise(r => setTimeout(r, 1100));
+  await delay(1100);
   assert.equal(await page.$eval("#last-refresh", e => e.dateTime), proof.initial.stamp);
   await page.click("#fit");
   const bounds = await page.$eval("#diagram > svg", e => {
@@ -100,6 +109,56 @@ try {
   assert.equal((await ready(original)).dark, false, "Manual preference survives reload");
   await page.setViewport({width: 390, height: 780});
   proof.mobile = await ready(original);
+  // Keep this browser/page alive through an actual F4 stop/same-port restart.
+  const retainedTarget = page.target(), previousSockets = new Set(socketIds);
+  let connected;
+  const reconnect = new Promise(resolve => { connected = resolve; });
+  const accept = e => {
+    if (!previousSockets.has(e.requestId) && e.response.status === 101) connected();
+  };
+  cdp.on("Network.webSocketHandshakeResponseReceived", accept);
+  try {
+    const port = Number(new URL(origin).port);
+    const traffic = await new Promise((resolve, reject) => {
+      const chunks = [];
+      let clientPort;
+      const socket = net.createConnection({host: "127.0.0.1", port, allowHalfOpen: true});
+      socket.setTimeout(2000, () => socket.destroy(new Error("Server EOF timed out")));
+      socket.once("error", reject);
+      socket.once("connect", () => {
+        clientPort = socket.localPort;
+        socket.write("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
+      });
+      socket.on("data", chunk => chunks.push(chunk));
+      // Server FIN first, then client FIN: make server-side TIME_WAIT deterministic.
+      socket.once("end", () => socket.end(() => resolve({clientPort, body: Buffer.concat(chunks)})));
+    });
+    assert(traffic.body.toString().startsWith("HTTP/1.1 200"));
+    const old = await cli("--status");
+    assert((await cli("--stop")).stopped);
+    const tcpRows = async () => (await fs.readFile("/proc/net/tcp", "utf8")).trim().split("\n").slice(1)
+      .map(line => line.trim().split(/\s+/))
+      .filter(row => parseInt(row[1].split(":")[1], 16) === port);
+    const rows = await tcpRows();
+    assert(!rows.some(row => row[3] === "0A"), "Stopped listener is gone");
+    const timeWait = rows.find(row => row[3] === "06" &&
+      parseInt(row[2].split(":")[1], 16) === traffic.clientPort);
+    assert(timeWait, "The real connection remains in server-side TIME_WAIT");
+    const startedAt = performance.now(), restarted = await cli("--port", String(port));
+    assert.equal(restarted.url, old.url);
+    assert.notEqual(restarted.pid, old.pid);
+    assert(restarted.source_current);
+    const cliSeconds = (performance.now() - startedAt) / 1000;
+    assert((await tcpRows()).some(row => row[1] === timeWait[1] && row[2] === timeWait[2] && row[3] === "06"),
+      "Restart did not wait for TIME_WAIT expiry");
+    await Promise.race([reconnect, delay(12000, undefined, {ref: false}).then(() => {
+      throw new Error("Surviving page did not reconnect LiveReload");
+    })]);
+    proof.restart = {port, oldPid: old.pid, newPid: restarted.pid,
+      cliSeconds, reconnectSecondsSinceStart: (performance.now() - startedAt) / 1000,
+      timeWait: timeWait.slice(1, 4),
+      reconnected: true};
+  } finally { cdp.off("Network.webSocketHandshakeResponseReceived", accept); }
   for (let i = 0; i < 3; i++) {
     const bytes = Buffer.from(`# State\r\n\r\n\`\`\`mermaid\r\nflowchart LR\r\n a["État ${i} &amp;"] --> b[Local]\r\n\`\`\`\r\n`);
     if (i === 1) {
@@ -109,6 +168,9 @@ try {
     } else await fs.writeFile(sourcePath, bytes);
     proof.watch.push({atomic: i === 1, sha256: hash(bytes), rendered: await ready(bytes)});
   }
+  assert.equal(page.target(), retainedTarget, "Same page survives restart and watched reloads");
+  proof.restart.sameBrowserPage = true;
+  proof.restart.watchedReloads = proof.watch.length;
   assert(proof.websocket.length >= 3);
   assert(proof.websocket.every(u => u === origin.replace("http:", "ws:") + "/livereload"));
   assert.deepEqual(proof.external, []);

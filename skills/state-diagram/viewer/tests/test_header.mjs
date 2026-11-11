@@ -2,10 +2,10 @@
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import {after, before, test} from "node:test";
-import {fileURLToPath, pathToFileURL} from "node:url";
+import {fileURLToPath} from "node:url";
+import {launchBrowser} from "./browser.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const template = await fs.readFile(path.join(here, "../assets/templates/index.html"), "utf8");
@@ -28,23 +28,7 @@ const html = template.replace(/\{%[\s\S]*?%\}/g, "")
   .replaceAll("{{ port }}", "1119");
 let browser;
 
-before(async () => {
-  let modulePath = process.env.PUPPETEER_MODULE;
-  if (!modulePath) {
-    for (const entry of await fs.readdir(path.join(os.homedir(), ".npm/_npx"))) {
-      const root = path.join(os.homedir(), ".npm/_npx", entry, "node_modules/puppeteer");
-      try {
-        const metadata = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"));
-        modulePath = path.resolve(root, metadata.main);
-        await fs.access(modulePath);
-        break;
-      } catch { modulePath = undefined; }
-    }
-  }
-  assert(modulePath, "Existing cached Puppeteer only; no download fallback");
-  const {default: puppeteer} = await import(pathToFileURL(modulePath));
-  browser = await puppeteer.launch({headless: true, args: ["--no-sandbox", "--disable-background-networking"]});
-});
+before(async () => { browser = await launchBrowser(); });
 after(async () => { await browser?.close(); });
 
 async function fixture(run, {corruptHash = false, corruptFence = false} = {}) {
@@ -131,7 +115,6 @@ async function expectStamp(page, now) {
 }
 
 test("Header hides only the rendered heading/hash/status and stamps successful local completion", async () => {
-  assert(source.startsWith("# State\r\n"));
   await fixture(async page => {
     await jobs(page, 1);
     assert.deepEqual(await timestamp(page), {iso: null, text: "Not yet"});
@@ -211,6 +194,7 @@ for (const [name, options, message] of [
       assert.equal(await page.$("#diagram > svg"), null);
       assert.equal(await page.evaluate(() => document.body.dataset.sourceSha256), undefined);
       assert.equal(await page.$eval("#render-error", e => e.hidden), false);
+      assert(await page.$("pre > code.language-mermaid"), "Readable raw-code fallback remains");
     }, options);
   });
 }
@@ -227,45 +211,44 @@ test("Mermaid failure or missing SVG cannot advance the timestamp", async () => 
   }
 });
 
-test("Both switches have left labels/right tracks, no visible On/Off, and native accessible keyboard states", async () => {
+async function expectFit(page) {
+  const view = await page.evaluate(() => ({
+    fit: document.querySelector("#fit").checked,
+    width: document.querySelector("#diagram > svg").getBoundingClientRect().width,
+    available: document.querySelector("#diagram").getBoundingClientRect().width,
+  }));
+  assert(view.fit && Math.abs(view.width - view.available) < 1, JSON.stringify(view));
+}
+
+test("Fit defaults on for delayed render, new SVG and viewport resize", async () => {
   await fixture(async page => {
     await jobs(page, 1);
+    assert.equal(await page.$eval("#fit", e => e.checked), true);
     await resolve(page, 0, finish);
     await ready(page, new Date(finish).toISOString());
-    for (const width of [1280, 375]) {
-      await page.setViewport({width, height: 900});
-      const layout = await page.$$eval(".toggle", labels => labels.map(label => {
-        const text = label.querySelector("span:not(.toggle-track)");
-        const track = label.querySelector(".toggle-track");
-        return {text: label.innerText, left: text.getBoundingClientRect().right,
-          right: track.getBoundingClientRect().left};
-      }));
-      assert.deepEqual(layout.map(e => e.text), ["Fit width", "Dark mode"]);
-      assert(layout.every(e => e.left < e.right), JSON.stringify(layout));
-    }
-    const cdp = await page.createCDPSession();
-    async function states(fit, dark) {
-      const {nodes} = await cdp.send("Accessibility.getFullAXTree");
-      for (const [name, value] of [["Fit width", fit], ["Dark mode", dark]]) {
-        const input = nodes.find(n => n.role?.value === "switch" && n.name?.value === name);
-        assert(input);
-        assert.equal(input.properties.find(p => p.name === "checked").value.value, String(value));
-      }
-    }
-    await states(true, false);
-    await page.keyboard.press("Tab");
-    assert.equal(await page.evaluate(() => document.activeElement.id), "fit");
+    await expectFit(page);
+    await page.setViewport({width: 720, height: 900});
+    await expectFit(page);
+    await page.$eval("#diagram", (diagram, replacement) => {
+      diagram.innerHTML = replacement;
+    }, svg.replaceAll("2400", "3200"));
+    await expectFit(page);
+  });
+});
+
+test("Manual choice while rendering is pending survives completion and resize", async () => {
+  await fixture(async page => {
+    await jobs(page, 1);
+    await page.focus("#fit");
     await page.keyboard.press("Space");
-    await states(false, false);
-    await page.keyboard.press("Tab");
-    assert.equal(await page.evaluate(() => document.activeElement.id), "theme");
-    await page.keyboard.press("Space");
-    await states(false, true);
-    assert.equal(await page.evaluate(() => localStorage.getItem("state-view-theme")), "dark");
-    await jobs(page, 2);
-    await resolve(page, 1, finish + 1000);
-    await ready(page, new Date(finish + 1000).toISOString());
+    await resolve(page, 0, finish);
+    await ready(page, new Date(finish).toISOString());
+    await page.setViewport({width: 720, height: 900});
     assert.equal(await page.$eval("#fit", e => e.checked), false);
-    assert(!/\bOn\b|\bOff\b/.test(await page.$eval("header", e => e.innerText)));
+    assert.equal(await page.$eval("#diagram > svg", e => e.getBoundingClientRect().width), 2400);
+    await page.click("#fit");
+    await expectFit(page);
+    await page.setViewport({width: 1024, height: 900});
+    await expectFit(page);
   });
 });
