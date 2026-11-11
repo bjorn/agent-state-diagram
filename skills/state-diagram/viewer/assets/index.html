@@ -1,19 +1,12 @@
-{% set source = load_data(path="state/state.md", format="plain") %}
-{% set source_hash = get_hash(literal=source, sha_type=256, base64=false) %}
-{% set port = "1117" %}
-{% set url_parts = config.base_url | replace(from="/", to="") | split(pat=":") %}
-{% if url_parts | length == 3 %}{% set port = url_parts | last %}{% endif %}
-{% set reload_setup = "window.LiveReloadOptions={host:window.location.hostname,port:" ~ port ~ ",mindelay:10};" %}
-{% set reload_hash = get_hash(literal=reload_setup, sha_type=256, base64=true) %}
 <!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; font-src 'none'; style-src 'unsafe-inline'; script-src 'self' 'sha256-{{ reload_hash }}'; connect-src ws://127.0.0.1:{{ port }}">
-  <meta name="state-source-sha256" content="{{ source_hash }}">
-  <meta name="state-source-base64" content="{{ source | base64_encode }}">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self' data:; font-src 'none'; style-src 'unsafe-inline'; script-src 'self'; connect-src 'self'">
+  <meta name="state-source-sha256" content="{{sha256}}">
+  <link rel="icon" href="data:,">
   <title>State</title>
   <style>
     :root { color-scheme: light; --page: #f4f6f8; --surface: #fff; --text: #202830; --muted: #57606a; --border: #d8dee4; --focus: #0969da; --thumb: #fff; font: 14px/1.4 system-ui, sans-serif; color: var(--text); background: var(--page); }
@@ -38,7 +31,6 @@
     main { overflow: auto; padding: .6rem; }
     main[data-diagram-panning] #diagram,
     main[data-diagram-panning] #diagram * { cursor: grabbing !important; user-select: none !important; }
-    #markdown > h1 { display: none; }
     pre { white-space: pre-wrap; }
     #diagram { display: flow-root; }
     #diagram > svg { display: block; width: var(--diagram-width); max-width: none; height: auto; background: var(--surface); }
@@ -55,7 +47,7 @@
     #diagram > svg[data-theme="dark"] :is(.nodeLabel, .edgeLabel, .cluster-label) { color: var(--text) !important; }
     #diagram > svg[data-theme="dark"] text { fill: var(--text) !important; }
   </style>
-  <script defer src="/mermaid-12.3.0.min.js"></script>
+  <script defer src="/mermaid.min.js"></script>
   <script defer src="/dashboard.js"></script>
 </head>
 <body>
@@ -67,6 +59,6 @@
       <label class="toggle"><input id="theme" type="checkbox" role="switch"><span>Dark mode</span><span class="toggle-track" aria-hidden="true"></span></label>
     </div>
   </header>
-  <main id="markdown">{{ source | markdown | safe }}</main>
+  <main id="markdown"><pre id="source">{{source}}</pre></main>
 </body>
 </html>

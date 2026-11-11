@@ -5,8 +5,8 @@ lists and optional helper assistants. It works with one assistant; delegation
 and a browser dashboard are not prerequisites.
 
 This MIT package includes the skill, fictional examples and an optional local
-Zola/Mermaid viewer. No live work state, generated dependency bundle or private
-project integration is bundled.
+Mermaid viewer: one Python standard-library script. No live work state,
+generated dependency bundle or private project integration is bundled.
 
 ## Install manually
 
@@ -45,7 +45,7 @@ Expected installation layout, where the outer directory is supplied by the host:
     examples/
       state.md
       single-assistant.md
-    viewer/                 # optional setup, runtime, UI, tests and guide
+    viewer/                 # optional viewer script, page and guide
 ```
 
 There is no required provider API or automatic startup-file edit.
@@ -91,3 +91,10 @@ host-specific installer or cross-host compatibility certification is supplied.
 The [MIT license](LICENSE) covers this package's authored code and prose.
 Third-party assets are obtained separately with pinned integrity checks;
 see [viewer notices](skills/state-diagram/viewer/NOTICES.md).
+
+## Development
+
+The viewer's smoke tests live in `tests/`, outside the installable skill, and
+need only Python's standard library: `python3 -m unittest discover -s tests`.
+CI also checks that the pinned Mermaid downloads still match. Browser behavior
+is checked by hand; see the viewer guide's manual check.

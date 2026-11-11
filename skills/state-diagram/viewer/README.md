@@ -8,81 +8,66 @@ The core skill works without a viewer. To set this one up, ask your assistant:
 
 ## Setup
 
-Requires Linux x86_64, Python 3.10+, `/proc`, Linux pidfds and an ordinary local
-browser. Setup pins Zola 0.23.6 (Linux x86_64 musl) and Mermaid 12.3.0. Other
-platforms are not currently supported. Node/Puppeteer are needed only for tests.
+`viewer.py` is a single Python 3.10+ standard-library script. It needs a POSIX
+system for `fcntl` locking and has been tested on Linux. Its only dependency is
+Mermaid 12.3.0, pinned by SHA-256 in `viewer.py`.
 
-Set `SKILL` to the **installed `state-diagram` directory**, not a Git checkout.
-Choose a dedicated physical project directory outside the installed skill.
-For a **new, approved** viewer, after explicit download consent:
-
-```sh
-python3 "$SKILL/viewer/setup.py" --site ./state-view --init-example --allow-downloads
-python3 "$SKILL/viewer/serve.py" --site ./state-view
-```
-
-Open **http://127.0.0.1:1117/**. The first command creates fictional example
-state, not a claim about current work. Replace it with observed work under the
-core skill's update rules once writing is approved. No provider configuration,
-global cache discovery, Git operation or `AGENTS.md` edit is performed.
-
-**Existing map:** the sole canonical file must be
-`<site>/state/state.md`, with `# State` and one Mermaid fence, no front matter.
-If it already exists there, omit `--init-example`; setup preserves its bytes.
-If it lives elsewhere, ask before any relocation and agree on path/Git policy.
-Setup never moves it. Do not add a mirror, symlink or second authority to bypass
-Zola's within-root `load_data` restriction. An existing directory with unrelated
-or modified files is rejected instead of overwritten.
-
-**Offline:** omit `--allow-downloads` and supply existing verified assets:
+Set `SKILL` to the installed `state-diagram` directory. Choose a private
+runtime directory outside it, such as `./state-view`. After download consent:
 
 ```sh
-python3 "$SKILL/viewer/setup.py" --site ./state-view --init-example \
-  --zola /path/to/zola --mermaid /path/to/mermaid.min.js \
-  --mermaid-license /path/to/mermaid/LICENSE
+python3 "$SKILL/viewer/viewer.py" setup --runtime ./state-view --allow-downloads
+python3 "$SKILL/viewer/viewer.py" start --runtime ./state-view --source ./state.md
 ```
 
-These files must match the pinned SHA-256 values in `common.py`. There is no
-fallback download. Repeating setup without `--init-example` reuses exact
-installed assets. Changed assets require review, not a forced overwrite.
-Downloads, when approved, occur only during setup; the browser uses local JS,
-no CDN, external fonts or telemetry.
+Open <http://127.0.0.1:1117/> or <http://localhost:1117/>. Use `--port` for
+another loopback port.
 
-## Daily use and lifecycle
+- **Offline:** copy `mermaid.min.js` and its `LICENSE`, saved as
+  `Mermaid-LICENSE`, into the runtime directory, then run `setup` without
+  `--allow-downloads`. Setup verifies both files against the pins.
+- **Existing map:** pass its path as `--source`. The viewer only reads it, so
+  the map can stay wherever the project keeps it.
+- **New map:** `cp "$SKILL/examples/single-assistant.md" ./state.md` gives a
+  fictional starting point. Replace it with observed work once writing is approved.
 
-Edit **only `state-view/state/state.md`**, in place or by atomic replacement.
-Zola directly watches its parent using `--extra-watch-path state`. No publish
-command, source copy, extra watcher or per-edit CLI render is needed.
+## Daily use
+
+Edit the canonical file in place or by atomic replacement. Open pages
+long-poll the server and reload as soon as the file's SHA-256 changes.
 
 ```sh
-python3 "$SKILL/viewer/serve.py" --site ./state-view --status
-python3 "$SKILL/viewer/serve.py" --site ./state-view --stop
+python3 "$SKILL/viewer/viewer.py" status --runtime ./state-view
+python3 "$SKILL/viewer/viewer.py" stop --runtime ./state-view
 ```
 
-Startup validates but never initializes/truncates state. Only `cache/` is
-disposable, disjoint from canonical `state/`. Setup places verified dependencies
-there and ignores generated cache/bundle files in the dedicated project.
-Keep canonical Git policy in local instructions. Source, config, templates,
-logs and runtime metadata return 404. **The served HTML embeds every canonical
-Markdown byte in base64**, including hidden HTML comments and text absent from
-the visible diagram. Anyone able to read the page can recover the whole file;
-raw-source 404s do not make it confidential. Include only material approved for
-that local view. Loopback is not authentication: other local users/processes
-can read it. Do not expose this development server on a network.
+`status` exits 0 only when the served page embeds the file's current digest.
+That proves served freshness, not browser completion: after a successful
+render the page sets `data-source-sha256` on `body` and on the SVG. The header
+shows the local time of the last successful render; failed renders leave it
+unchanged and keep the source text readable.
 
-Foreign/unsupported lifecycle records are rejected without replacement; valid
-site-associated stale records allow normal restart. Ordinary documented Python
-commands suppress local bytecode writes inside the installed skill.
-One detached Zola process owns the lock; no Python supervisor remains. It
-survives launcher/session cleanup, not reboot. An occupied port or duplicate
-launch fails without replacing anything. `--port` selects another unprivileged
-loopback port. Stop verifies root/command/start-ticks and signals through a
-pidfd; stale or reused process identities are rejected.
+One detached server process runs per runtime directory and holds its `lock`
+file for as long as it lives. It survives the launching session but not a
+reboot. A second `start` fails, a busy port fails without disturbing its
+listener, and a restart on the same port works immediately. `stop` signals the
+recorded process only while the lock shows it is still the viewer.
 
-Fit width defaults on; manual choices, cursor-centered wheel zoom, left drag
-and per-axis centering work with light/OS/persisted dark mode. Last refresh is
-local date/time of the last accepted successful diagram render, not a clock or
-source mtime. Failed/stale renders do not advance it. Refresh freshness means
-SHA-256 of canonical bytes = hidden served metadata = ready body/SVG hashes.
-Allow asynchronous rebuild/render time; `--status` proves served freshness,
-not browser completion. See [tests](tests/README.md) for qualification.
+The server answers only `/`, `/wait`, `/dashboard.js` and `/mermaid.min.js`,
+and rejects requests whose `Host` is not `127.0.0.1` or `localhost`, which
+blocks DNS-rebinding reads. **The page embeds every byte of the canonical
+Markdown**, including comments outside the diagram. Loopback is not
+authentication: other local users and processes can read the page. Include
+only material approved for that view, and keep the server off the network.
+
+## Manual check
+
+CI runs only smoke tests (`python3 -m unittest discover -s tests` from the
+repository root). After changing the page, check in a browser:
+
+1. The diagram renders and the header shows a last-refresh time.
+2. An edit to the map appears without a manual reload. Broken Mermaid syntax
+   shows an error with the source text; fixing it recovers.
+3. Fit width, wheel zoom at the cursor and drag panning work.
+4. Dark mode keeps status colors readable, and the choice survives a reload.
+5. After `stop` and `start`, an open page reconnects and follows the next edit.

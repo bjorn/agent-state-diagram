@@ -1,0 +1,22 @@
+name: Viewer smoke tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.x"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Pinned Mermaid downloads still match
+        run: python3 skills/state-diagram/viewer/viewer.py setup --runtime "$RUNNER_TEMP/runtime" --allow-downloads
+      - name: Smoke tests
+        run: python3 -m unittest discover -s tests -v

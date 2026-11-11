@@ -1,4 +1,4 @@
-/* No fetches: Zola embeds canonical Markdown; cached Mermaid renders locally. */
+/* The server embeds the canonical Markdown; the pinned local Mermaid renders it. */
 (async () => {
   // Diagram gestures: begin (also exercised directly by the focused unit tests).
   const gestureOwners = new WeakMap();
@@ -177,21 +177,25 @@
     applyTheme();
     requestRender();
   });
-  try {
-    const encoded = document.querySelector('meta[name="state-source-base64"]').content;
-    const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
-    const hash = await crypto.subtle.digest("SHA-256", bytes);
-    const digest = Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, "0")).join("");
-    const expected = document.querySelector('meta[name="state-source-sha256"]').content;
-    if (digest !== expected) throw new Error("Canonical source digest mismatch");
-    const source = new TextDecoder("utf-8", {fatal: true}).decode(bytes);
-    const blocks = [...source.matchAll(/^```mermaid[ \t]*\r?\n([\s\S]*?)^```[ \t]*\r?$/gm)];
-    const fences = document.querySelectorAll('pre > code[data-lang="mermaid"], pre > code.language-mermaid');
-    if (blocks.length !== 1 || fences.length !== 1) throw new Error("Expected one Mermaid fence");
-    const code = blocks[0][1].replace(/\r\n/g, "\n");
-    if (fences[0].textContent.replace(/\r\n/g, "\n").trimEnd() !== code.trimEnd()) {
-      throw new Error("Rendered Markdown fence differs from canonical source");
+  // Long-poll the server and reload once the canonical bytes change.
+  async function watchSource(current) {
+    for (;;) {
+      try {
+        const response = await fetch(`/wait?sha256=${current}`, {cache: "no-store"});
+        if (!response.ok) throw new Error(response.statusText);
+        if ((await response.text()) !== current) return location.reload();
+      } catch {
+        await new Promise(resolve => setTimeout(resolve, 1000)); // Server restarting: retry.
+      }
     }
+  }
+  const source = document.querySelector("#source");
+  const digest = document.querySelector('meta[name="state-source-sha256"]').content;
+  watchSource(digest);
+  try {
+    const blocks = [...source.textContent.matchAll(/^```mermaid[ \t]*\n([\s\S]*?)^```[ \t]*$/gm)];
+    if (blocks.length !== 1) throw new Error("Expected one Mermaid fence");
+    const code = blocks[0][1];
     const gestures = attachDiagramGestures({
       viewport: document.querySelector("main"), fit: document.querySelector("#fit"),
       isReady: svg => document.body.dataset.sourceSha256 === digest && svg.dataset.sourceSha256 === digest,
@@ -252,7 +256,7 @@
             svg.dataset.sourceSha256 = digest;
             svg.dataset.theme = renderedTheme;
             const scroll = gestures.beforeRender();
-            (document.querySelector("#diagram") || fences[0].parentElement).replaceWith(diagram);
+            (document.querySelector("#diagram") || source).replaceWith(diagram);
             gestures.afterRender(scroll);
             delete document.body.dataset.renderError;
             document.body.dataset.sourceSha256 = digest;
@@ -277,6 +281,6 @@
     renderError.textContent = `Render failed: ${error.message}`;
     renderError.hidden = false;
     document.body.dataset.renderError = error.message;
-    // The original readable Markdown/code fence remains on failure.
+    // The readable canonical source remains on failure.
   }
 })();
