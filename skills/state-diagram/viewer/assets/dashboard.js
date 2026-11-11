@@ -238,7 +238,7 @@
                   dropShadow: "drop-shadow(1px 2px 2px rgba(0, 0, 0, 0.45))",
                 } : {}),
               },
-              flowchart: {useMaxWidth: false},
+              flowchart: {useMaxWidth: false, wrappingWidth: 290},
             });
             // A unique ID keeps Mermaid from removing the last-good SVG mid-render.
             const rendered = await mermaid.render(`state-diagram-svg-${revision}`, code);

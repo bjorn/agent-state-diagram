@@ -44,7 +44,7 @@ Mermaid's subroutine shape: doubled side borders, not a double outline.
 
 Use stable, non-sensitive node IDs and quote labels. Escape user-supplied
 text for Mermaid; the only markup in labels is the `<br>` separator in
-helper labels.
+helper labels. Keep note and TODO labels to about one sentence.
 
 Mermaid may reorder the nodes inside a subgraph. Chain each list's items in
 order with invisible links, such as `t_scope ~~~ t_build ~~~ t_review`, so the
